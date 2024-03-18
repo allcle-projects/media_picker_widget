@@ -75,44 +75,148 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   void openImagePicker(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) {
-        return MediaPicker(
-          mediaList: mediaList,
-          onPicked: (selectedList) {
-            setState(() => mediaList = selectedList);
-            Navigator.pop(context);
-          },
-          onCancel: () => Navigator.pop(context),
-          mediaCount: MediaCount.multiple,
-          mediaType: MediaType.all,
-          decoration: PickerDecoration(
-            blurStrength: 0,
-            scaleAmount: 1,
-            counterBuilder: (context, index) {
-              if (index == null) return const SizedBox();
-              return Align(
-                alignment: Alignment.topRight,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.green,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  padding: const EdgeInsets.all(4),
-                  child: Text(
-                    '$index',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                    ),
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ImagePickerPage(mediaList: mediaList),
+      ),
+    );
+    // showModalBottomSheet(
+    //   context: context,
+    //   builder: (context) {
+    //     return MediaPicker(
+    //       listSize: 30,
+    //       mediaList: mediaList,
+    //       onPicked: (selectedList) {
+    //         setState(() => mediaList = selectedList);
+    //         Navigator.pop(context);
+    //       },
+    //       onCancel: () => Navigator.pop(context),
+    //       mediaCount: MediaCount.multiple,
+    //       mediaType: MediaType.image,
+    //       decoration: PickerDecoration(
+    //         blurStrength: 0,
+    //         scaleAmount: 1,
+    //         counterBuilder: (context, index) {
+    //           if (index == null) return const SizedBox();
+    //           return Align(
+    //             alignment: Alignment.topRight,
+    //             child: Container(
+    //               decoration: BoxDecoration(
+    //                 color: Colors.green,
+    //                 borderRadius: BorderRadius.circular(8),
+    //               ),
+    //               padding: const EdgeInsets.all(4),
+    //               child: Text(
+    //                 '$index',
+    //                 style: const TextStyle(
+    //                   color: Colors.white,
+    //                   fontWeight: FontWeight.bold,
+    //                 ),
+    //               ),
+    //             ),
+    //           );
+    //         },
+    //       ),
+    //     );
+    //   },
+    // );
+  }
+}
+
+class ImagePickerPage extends StatefulWidget {
+  final List<Media> mediaList;
+  const ImagePickerPage({Key? key, required this.mediaList}) : super(key: key);
+
+  @override
+  State<ImagePickerPage> createState() => _ImagePickerPageState();
+}
+
+class _ImagePickerPageState extends State<ImagePickerPage> {
+  // List<Media> mediaList = [];
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Picker page'),
+        leading: null,
+      ),
+      body: MediaPicker(
+        listSize: 30,
+        mediaList: widget.mediaList,
+        onPicked: (selectedList) {
+          setState(() {
+            widget.mediaList.addAll(selectedList);
+            // mediaList = selectedList;
+          });
+          Navigator.pop(context);
+        },
+        onCancel: () => Navigator.pop(context),
+        mediaCount: MediaCount.multiple,
+        mediaType: MediaType.image,
+        decoration: PickerDecoration(
+          blurStrength: 0,
+          scaleAmount: 1,
+          counterBuilder: (context, index) {
+            if (index == null) return const SizedBox();
+            return Align(
+              alignment: Alignment.topRight,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.green,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                padding: const EdgeInsets.all(4),
+                child: Text(
+                  '$index',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-              );
-            },
-          ),
-        );
-      },
+              ),
+            );
+          },
+        ),
+      ),
     );
+    // return MediaPicker(
+    //   listSize: 30,
+    //   mediaList: widget.mediaList,
+    //   onPicked: (selectedList) {
+    //     setState(() {
+    //       widget.mediaList.addAll(selectedList);
+    //       // mediaList = selectedList;
+    //     });
+    //     Navigator.pop(context);
+    //   },
+    //   onCancel: () => Navigator.pop(context),
+    //   mediaCount: MediaCount.multiple,
+    //   mediaType: MediaType.image,
+    //   decoration: PickerDecoration(
+    //     blurStrength: 0,
+    //     scaleAmount: 1,
+    //     counterBuilder: (context, index) {
+    //       if (index == null) return const SizedBox();
+    //       return Align(
+    //         alignment: Alignment.topRight,
+    //         child: Container(
+    //           decoration: BoxDecoration(
+    //             color: Colors.green,
+    //             borderRadius: BorderRadius.circular(8),
+    //           ),
+    //           padding: const EdgeInsets.all(4),
+    //           child: Text(
+    //             '$index',
+    //             style: const TextStyle(
+    //               color: Colors.white,
+    //               fontWeight: FontWeight.bold,
+    //             ),
+    //           ),
+    //         ),
+    //       );
+    //     },
+    //   ),
+    // );
   }
 }

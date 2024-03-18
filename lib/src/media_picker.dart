@@ -5,7 +5,8 @@ part of media_picker_widget;
 ///[albumSelector] is the widget that will show the album selector, you can use it to show album selector in your custom header. Use [PickerDecoration] to customize it.
 ///[completeSelection] is called when selection is done. If you want a button for user to confirm selection, you can use it. It will trigger [MediaPicker.onPicked] callback. Note: If MediaPicker's media count is [MediaCount.single], It won't ask for confirmation.
 ///[onBack] is the callback when user press back button. It will close album selector if it is open. Else your [MediaPicker.onCancel] callback will be called.
-typedef HeaderBuilder = Function(BuildContext context, Widget albumSelector, VoidCallback completeSelection, VoidCallback onBack);
+typedef HeaderBuilder = Function(BuildContext context, Widget albumSelector,
+    VoidCallback completeSelection, VoidCallback onBack);
 
 ///The MediaPicker widget that will select media files form storage
 class MediaPicker extends StatefulWidget {
@@ -21,6 +22,8 @@ class MediaPicker extends StatefulWidget {
     this.onPicking,
     this.headerBuilder,
     this.allowLimitedPermission = true,
+    this.mediaCountLimit = 5,
+    this.listSize = 60,
   });
 
   ///CallBack on image pick is done
@@ -53,6 +56,12 @@ class MediaPicker extends StatefulWidget {
   /// If true, the picker will allow picking media even if the permission is limited.
   final bool allowLimitedPermission;
 
+  // The maximum number of media that can be picked. This is only applicable when [mediaCount] is [MediaCount.multiple].
+  final int mediaCountLimit;
+
+  // The number of media to be displayed in the picker at a time.
+  final int listSize;
+
   @override
   _MediaPickerState createState() => _MediaPickerState();
 }
@@ -64,7 +73,9 @@ class _MediaPickerState extends State<MediaPicker> {
   final _headerController = GlobalKey<HeaderState>();
 
   AssetPathEntity? _selectedAlbum;
-  late List<MediaViewModel> _selectedMedias = [...MediaConversionService.toMediaViewList(widget.mediaList)];
+  late List<MediaViewModel> _selectedMedias = [
+    ...MediaConversionService.toMediaViewList(widget.mediaList)
+  ];
 
   Future<List<AssetPathEntity>> _fetchAlbums() async {
     var type = RequestType.common;
@@ -80,7 +91,8 @@ class _MediaPickerState extends State<MediaPicker> {
     if (!widget.allowLimitedPermission && result == PermissionState.limited) {
       PhotoManager.openSetting();
       return [];
-    } else if (result == PermissionState.authorized || (result == PermissionState.limited && widget.allowLimitedPermission)) {
+    } else if (result == PermissionState.authorized ||
+        (result == PermissionState.limited && widget.allowLimitedPermission)) {
       return await PhotoManager.getAssetPathList(type: type);
     } else {
       PhotoManager.openSetting();
@@ -127,65 +139,63 @@ class _MediaPickerState extends State<MediaPicker> {
     BuildContext context,
     AsyncSnapshot<List<AssetPathEntity>> snapshot,
   ) {
-    if (snapshot.hasData) {
-      final albums = snapshot.data!;
-
-      if (albums.isEmpty) {
-        return NoMedia(text: _decoration.noMedia);
-      } else {
-        final defaultSelectedAlbum = albums.first;
-
-        Widget header = Header(
-          key: _headerController,
-          onBack: handleBackPress,
-          onDone: (data) async {
-            var result = await MediaConversionService.toMediaList(data);
-            widget.onPicked(result);
-          },
-          albumController: _albumController,
-          selectedAlbum: _selectedAlbum ?? defaultSelectedAlbum,
-          mediaCount: widget.mediaCount,
-          decoration: _decoration,
-          selectedMedias: _selectedMedias,
-          headerBuilder: widget.headerBuilder,
-        );
-
-        return Column(
-          children: [
-            if (_decoration.actionBarPosition == ActionBarPosition.top) header,
-            Expanded(
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: MediaList(
-                      album: _selectedAlbum ?? defaultSelectedAlbum,
-                      previousList: _selectedMedias,
-                      mediaCount: widget.mediaCount,
-                      decoration: _decoration,
-                      scrollController: widget.scrollController,
-                      onMediaTilePressed: _onMediaTilePressed,
-                    ),
-                  ),
-                  AlbumSelector(
-                    panelController: _albumController,
-                    albums: albums,
-                    decoration: _decoration,
-                    onSelect: _onAlbumSelected,
-                  ),
-                ],
-              ),
-            ),
-            if (_decoration.actionBarPosition == ActionBarPosition.bottom) header,
-          ],
-        );
-      }
-    } else {
+    if (!snapshot.hasData) {
       return Center(
         child: LoadingWidget(
           decoration: _decoration,
         ),
       );
     }
+    final albums = snapshot.data ?? [];
+
+    if (albums.isEmpty) return NoMedia(text: _decoration.noMedia);
+
+    final defaultSelectedAlbum = albums.first;
+
+    Widget header = Header(
+      key: _headerController,
+      onBack: handleBackPress,
+      onDone: (data) async {
+        var result = await MediaConversionService.toMediaList(data);
+        widget.onPicked(result);
+      },
+      albumController: _albumController,
+      selectedAlbum: _selectedAlbum ?? defaultSelectedAlbum,
+      mediaCount: widget.mediaCount,
+      decoration: _decoration,
+      selectedMedias: _selectedMedias,
+      headerBuilder: widget.headerBuilder,
+    );
+
+    return Column(
+      children: [
+        if (_decoration.actionBarPosition == ActionBarPosition.top) header,
+        Expanded(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: MediaList(
+                  album: _selectedAlbum ?? defaultSelectedAlbum,
+                  previousList: _selectedMedias,
+                  mediaCount: widget.mediaCount,
+                  decoration: _decoration,
+                  scrollController: widget.scrollController,
+                  onMediaTilePressed: _onMediaTilePressed,
+                  listSize: widget.listSize,
+                ),
+              ),
+              AlbumSelector(
+                panelController: _albumController,
+                albums: albums,
+                decoration: _decoration,
+                onSelect: _onAlbumSelected,
+              ),
+            ],
+          ),
+        ),
+        if (_decoration.actionBarPosition == ActionBarPosition.bottom) header,
+      ],
+    );
   }
 }
 

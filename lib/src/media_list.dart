@@ -13,6 +13,7 @@ class MediaList extends StatefulWidget {
     required this.decoration,
     this.scrollController,
     required this.onMediaTilePressed,
+    required this.listSize,
   });
 
   final AssetPathEntity album;
@@ -20,8 +21,8 @@ class MediaList extends StatefulWidget {
   final MediaCount? mediaCount;
   final PickerDecoration decoration;
   final ScrollController? scrollController;
-  final Function(MediaViewModel media, List<MediaViewModel> selectedMedias)
-      onMediaTilePressed;
+  final Function(MediaViewModel media, List<MediaViewModel> selectedMedias) onMediaTilePressed;
+  final int listSize;
 
   @override
   _MediaListState createState() => _MediaListState();
@@ -37,7 +38,10 @@ class _MediaListState extends State<MediaList> {
   @override
   void initState() {
     _selectedMedias = [...widget.previousList];
-    _fetchNewMedia(refresh: true);
+    WidgetsBinding.instance.addPostFrameCallback((timeStamp) {
+      _fetchNewMedia(refresh: true);
+    });
+    // _fetchNewMedia(refresh: true);
     super.initState();
   }
 
@@ -100,11 +104,10 @@ class _MediaListState extends State<MediaList> {
     }
     _lastPage = _currentPage;
     final result = await PhotoManager.requestPermissionExtend();
-    if (result == PermissionState.authorized ||
-        result == PermissionState.limited) {
+    if (result == PermissionState.authorized || result == PermissionState.limited) {
       final newAssets = await _album.getAssetListPaged(
         page: _currentPage,
-        size: 60,
+        size: widget.listSize,
       );
       if (newAssets.isEmpty) {
         return;
@@ -121,10 +124,12 @@ class _MediaListState extends State<MediaList> {
       }
       // await Future.wait(tasks);
 
+      // WidgetsBinding.instance.addPostFrameCallback((timeStamp) {
       setState(() {
         _mediaList.addAll(newMedias);
         _currentPage++;
       });
+      // });
     } else {
       PhotoManager.openSetting();
     }
@@ -147,8 +152,7 @@ class _MediaListState extends State<MediaList> {
       if (isSelected) {
         setState(() => _selectedMedias.add(media));
       } else {
-        setState(() =>
-            _selectedMedias.removeWhere((_media) => _media.id == media.id));
+        setState(() => _selectedMedias.removeWhere((_media) => _media.id == media.id));
       }
     }
     widget.onMediaTilePressed(media, _selectedMedias);
@@ -163,8 +167,7 @@ class _MediaListState extends State<MediaList> {
       thumbnailAsync: entity.thumbnailDataWithSize(ThumbnailSize(200, 200)),
       type: mediaType,
       thumbnail: null,
-      videoDuration:
-          entity.type == AssetType.video ? entity.videoDuration : null,
+      videoDuration: entity.type == AssetType.video ? entity.videoDuration : null,
     );
   }
 }

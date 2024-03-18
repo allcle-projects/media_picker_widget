@@ -1,11 +1,10 @@
 import 'dart:typed_data';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:media_picker_widget/src/widgets/loading_widget.dart';
 
 import '../../media_picker_widget.dart';
 import '../media_view_model.dart';
-import 'loading_widget.dart';
 
 class MediaTile extends StatelessWidget {
   MediaTile({
@@ -40,8 +39,10 @@ class MediaTile extends StatelessWidget {
         builder: (context, snapshot) {
           if (snapshot.hasError) return SizedBox();
           if (!snapshot.hasData)
-            return LoadingWidget(
-              decoration: decoration,
+            return Center(
+              child: LoadingWidget(
+                decoration: decoration,
+              ),
             );
           return Padding(
             padding: const EdgeInsets.all(0.5),
@@ -54,39 +55,16 @@ class MediaTile extends StatelessWidget {
                           child: Stack(
                             children: [
                               Positioned.fill(
-                                child: ClipRect(
-                                  child: ImageFiltered(
-                                    imageFilter: ImageFilter.blur(
-                                      sigmaX: isSelected
-                                          ? decoration.blurStrength
-                                          : 0,
-                                      sigmaY: isSelected
-                                          ? decoration.blurStrength
-                                          : 0,
-                                    ),
-                                    child: AnimatedScale(
-                                      duration: _duration,
-                                      scale: isSelected
-                                          ? decoration.scaleAmount
-                                          : 1,
-                                      child: Image.memory(
-                                        media.thumbnail!,
-                                        fit: BoxFit.cover,
-                                      ),
-                                    ),
-                                  ),
+                                child: Image.memory(
+                                  media.thumbnail!,
+                                  fit: BoxFit.cover,
+                                  height: double.infinity,
+                                  width: double.infinity,
                                 ),
                               ),
                               Positioned.fill(
-                                child: AnimatedOpacity(
-                                  opacity: isSelected ? 1 : 0,
-                                  curve: Curves.easeOut,
-                                  duration: _duration,
-                                  child: ClipRect(
-                                    child: Container(
-                                      color: decoration.selectedColor,
-                                    ),
-                                  ),
+                                child: Container(
+                                  color: isSelected ? decoration.selectedColor : Colors.transparent,
                                 ),
                               ),
                               if (media.type == MediaType.video)

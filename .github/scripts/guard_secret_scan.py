@@ -19,6 +19,10 @@ from __future__ import annotations
 import argparse, os, re, subprocess, sys
 
 # 구조가 확실한 패턴만. 범용 엔트로피 검사는 오탐이 많아 넣지 않는다.
+# 관용 더미 값 — 이게 들어 있으면 "설정하라"는 표시지 자격증명이 아니다.
+_DUMMY = (r"(?:postgres|password|passwd|changeme|secret|admin|root|test|local|dev"
+          r"|example|none|null|redis|mysql|mariadb|user|guest)")
+
 RULES: list[tuple[str, re.Pattern]] = [
     ("GitHub token",       re.compile(r"gh[pousr]_[A-Za-z0-9]{30,}")),
     ("AWS access key",     re.compile(r"AKIA[0-9A-Z]{16}")),
@@ -28,13 +32,60 @@ RULES: list[tuple[str, re.Pattern]] = [
     ("Google API key",     re.compile(r"AIza[0-9A-Za-z_-]{35}")),
     ("GitLab PAT",         re.compile(r"glpat-[A-Za-z0-9_-]{15,}")),
     ("private key block",  re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+    # Slack Incoming Webhook — URL 자체가 자격증명이다(아는 사람은 누구나 그 채널에 게시).
+    # 계기: mote-erp inbound-required-service.ts 에 2025-12 부터 박혀 있었는데(MOTEERP-372)
+    #       이 스캐너 --all 이 «시크릿 패턴 없음» 이었다 (2026-09-22 실측).
+    # placeholder(${SLACK_WEBHOOK_URL}·<...>)는 문자 클래스 밖이라 통과한다.
+    ("Slack incoming webhook", re.compile(
+        r"hooks\.slack\.com/(?:services|workflows)/[A-Za-z0-9]{6,}/[A-Za-z0-9]{6,}/[A-Za-z0-9]{12,}")),
+    # 자기 스택의 서비스 비밀. 토큰류와 달리 고정 접두어가 없어 «변수명 + 값» 조합으로 잡는다.
+    # placeholder(${VAR}·$VAR·<...>·***·CHANGE_ME 등)는 값이 아니므로 제외한다.
+    # 계기: 이 레포 docker-compose.yml·.env.example 에 비밀 7종이 평문으로 153일 있었다(2026-08-26).
+    # 셸/compose 기본값에 박힌 평문:  ${SOMETHING_PASSWORD:-실제값}
+    # env 가 없으면 이 값이 그대로 쓰인다 — 예시가 아니라 살아있는 자격증명이다.
+    ("shell default secret", re.compile(
+        r"\$\{[A-Z][A-Z0-9_]*"
+        r"(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|ENCRYPTION_KEY|PRIVATE_KEY|ACCESS_KEY)[A-Z0-9_]*"
+        r":-(?!\s*\}|\$|<|\*{3})"
+        r"(?!" + _DUMMY + r"\s*\})"
+        r"(?![a-z]{3,12}\s*\})"
+        r"[^}\s]{6,}\}")),
+    # 비밀스러운 변수명 + 값. ${VAR:-...} 의 ":-" 를 값 구분자로 오인하지 않도록 (?!-) 를 둔다.
+    ("secret-ish env", re.compile(
+        r"\b[A-Z][A-Z0-9_]*"
+        r"(?:_SECRET_KEY|_SECRET|_API_KEY|_ENCRYPTION_KEY|_PRIVATE_KEY|_ACCESS_KEY"
+        r"|_AUTH_PASSWORD|_ADMIN_PASSWORD|_HTTP_SECRET)"
+        r"\s*[=:](?!-)\s*"
+        r"(?!['\"]?\\?['\"]?(?:\$|<|\{|\*{3}|\.{3}|CHANGE|REPLACE|YOUR|TODO|[xX]{3}"
+        r"|dummy|DUMMY|example|process\.env|os\.environ|os\.getenv|System\.getenv|getenv|String|Int|Long|Boolean|Optional|" + _DUMMY + r"\b))"
+        r"['\"]?[^\s'\"#,}<|()]{8,}")),
+    ("service secret env", re.compile(
+        r"(?:JASYPT_ENCRYPTOR_PASSWORD|SPRING_DATASOURCE_PASSWORD|POSTGRES_PASSWORD"
+        r"|MYSQL_PASSWORD|MYSQL_ROOT_PASSWORD|MARIADB_PASSWORD|REDIS_PASSWORD|DB_PASSWORD)"
+        # (?!-) : ${VAR:-기본값} 의 ":-" 를 값 구분자로 오인하지 않게 한다.
+        r"\s*[=:](?!-)\s*"
+        # 따옴표·백슬래시를 먼저 흘려보낸 뒤 판단한다. heredoc 안의 "\${VAR}" 형태를
+        # 놓치면 배포 스크립트가 통째로 오탐된다(2026-08-26 mote-modules scripts/ci/run.sh).
+        r"(?![\'\"]?\\?[\'\"]?(?:\$|<|\*{3}|\.{3}|CHANGE|REPLACE|YOUR|TODO|[xX]{3}"
+        r"|dummy|DUMMY|example|" + _DUMMY + r"\b))"
+        r"[\'\"]?[^\s\'\"#,}<|()]{6,}")),
 ]
+
+# 경로만으로 차단하는 파일 — 내용이 무엇이든 자격증명 덤프다. 줄 단위 패턴으로는 못 잡는다
+# (쿠키 값은 형식이 없다). 계기: .selenium_cookies/smartstore_cookies.json 에 Naver 커머스
+# 로그인 쿠키(NEONB 등 9개)가 2025-10-28 부터 추적돼 있었다 (2026-09-22 실측).
+DENY_PATH = re.compile(
+    r"(^|/)\.selenium_cookies/"
+    r"|(^|/)[A-Za-z0-9_.-]*cookies?\.json$"
+)
 
 # 면제는 **경로로만** 판단한다(내용 기반 면제는 진짜 유출까지 놓친다).
 ALLOW_PATH = re.compile(
     r"(^|/)(test|tests|__tests__)/"
     r"|\.(test|spec)\.[a-z]+$"
-    r"|(^|/)[^/]*\.example(\.[a-z]+)?$"
+    # ★.example 은 면제하지 않는다. "예시"라면 placeholder 라서 규칙이 알아서 통과시키고,
+    #   실제 값이 박혀 있으면 잡혀야 한다. 이 면제 때문에 mote-erp .env.example 의
+    #   실제 값 6종이 153일간 무사통과했다(2026-08-26 확인).
     r"|(^|/)detekt-baseline\.xml$"
     # ★이 파일 자신(패턴 정의·self-test 픽스처). 레포마다 위치가 다르므로 파일명으로 잡는다 —
     #   mote-dev 는 ADR-001 때문에 .github/actions/secret-scan/ 아래에 둔다.
@@ -55,6 +106,8 @@ def match_line(path: str, line: str) -> str | None:
     """규칙명 또는 None. 시크릿 본문은 반환하지 않는다."""
     if ALLOW_PATH.search(path) or INLINE_ALLOW.search(line):
         return None
+    if DENY_PATH.search(path) and line.strip():
+        return "browser cookie dump (path)"
     for name, pat in RULES:
         if pat.search(line):
             return name
@@ -108,14 +161,57 @@ def self_test() -> int:
         ("d.yml", "  private-key: -----BEGIN EC PRIVATE KEY-----"),
         ("e.env", "SLACK_BOT_TOKEN=xoxb-1234567890-abcdefghij"),
         ("f/g/h.properties", "key=AIza" + "C" * 35),
+        # Slack Incoming Webhook URL — 실제로 있던 형태(TS 객체 리터럴) 그대로.
+        ("svc.ts", "\t\t\twebhookUrl: 'https://hooks.slack.com/services/T0AAAAAAA/B0BBBBBBBBB/" + "c" * 24 + "'"),
+        # 브라우저 쿠키 덤프 — 경로만으로 차단(값에는 형식이 없다).
+        (".selenium_cookies/smartstore_cookies.json", '    "value": "AbCdEf0123",'),
+        ("downloads/naver_cookies.json", '{"name": "NEONB",'),
+        ("i/docker-compose.yml", "  - JASYPT_ENCRYPTOR_PASSWORD=s0meRealValue123"),
+        ("j/docker-compose.yml", "  POSTGRES_PASSWORD: prodPassw0rd"),
+        ("k.md", "정상 기동: DB_PASSWORD=liveSecret99 java -jar app.jar"),
+        # .example 이라도 실제 값이면 잡는다 — 이 면제가 mote-erp 6종을 153일간 통과시켰다.
+        (".env.example", "N8N_ENCRYPTION_KEY=aB3xK9mQ7pL2wR5tY8uI0oP1zX4c"),
+        ("config.example.env", "TOKEN=ghp_" + "A" * 36),
+        # 셸 기본값에 박힌 평문 — env 부재 시 그대로 쓰인다.
+        ("docker-compose.yml", "      POSTHOG_SECRET_KEY: ${POSTHOG_SECRET_KEY:-aB3xK9mQ7pL2wR5tY8uI0oP1}"),
+        ("stack.yml", "      DATABASE_URL: postgresql://u:${POSTHOG_DB_PASSWORD:-aB3xK9mQ7pL2wR5tY8uI0oP1}@h/db"),
+        # 비밀스러운 변수명 + 값
+        ("app.yml", "INTERNAL_API_SECRET: aB3xK9mQ7pL2wR5tY8uI0oP1"),
+        ("deploy.env", "DIFY_SANDBOX_API_KEY=aB3xK9mQ7pL2wR5tY8uI0oP1"),
     ]
     must_ignore = [
         ("src/tests/fixture.py", "TOKEN = 'ghp_" + "A" * 36 + "'"),
-        ("config.example.env", "TOKEN=ghp_" + "A" * 36),
         ("real.yml", "token: ghp_" + "A" * 36 + "  # secret-scan:allow 문서 예시"),
+        # 관용 더미가 기본값이면 "설정하라"는 표시지 자격증명이 아니다.
+        ("docker-compose.yml", "      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-changeme}"),
+        ("docker-compose.yml", "      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}"),
+        # 값이 아니라 다른 변수를 읽어오는 코드
+        ("env.ts", "\tKEYCLOAK_CLIENT_SECRET: process.env.KEYCLOAK_CLIENT_SECRET,"),
+        # 타입 선언 (detekt baseline·코틀린 프로퍼티)
+        ("Util.kt", "    @Value(\"\\${ncp.secret-key}\") private val NCP_SECRET_KEY: String,"),
+        # .example 의 정상적인 모습 — placeholder
+        (".env.example", "DIFY_SECRET_KEY=<발급 후 입력>"),
+        # 값 안에 <...> 가 있으면 placeholder 다 (sk-ant-<발급 후 입력>)
+        ("ops.md", "ANTHROPIC_API_KEY=sk-ant-<발급 후 입력>"),
+        # 환경변수를 읽는 코드·셸 파이프는 값이 아니다
+        ("t.py", 'GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")'),
+        ("h.md", "curl -H \"x-api-key: $(grep ^MCP_API_KEY= .env | cut -d= -f2)\""),
         ("plain.yml", "name: application-adapter-allcl"),
+        # 웹훅 placeholder·문서 예시는 값이 아니다.
+        ("ops.md", "SLACK_WEBHOOK_URL=https://hooks.slack.com/services/${SLACK_WEBHOOK_URL}"),
+        ("ops.md", "웹훅은 https://hooks.slack.com/services/<T..>/<B..>/<token> 형식이다"),
+        # 쿠키를 다루는 «코드» 는 덤프가 아니다 — 경로 규칙은 .json 덤프만 본다.
+        ("src/lib/server/cookies.ts", "export function readCookies() {}"),
+        ("src/routes/api/cookies/+server.ts", "export const GET = () => json({})"),
         ("short.yml", "id: ghp_short"),
         ("adapter-allcl/detekt-baseline.xml", "<ID>x ghp_" + "A" * 36 + "</ID>"),
+        # placeholder 는 값이 아니다 — 이걸 잡으면 표준 패턴 문서가 전부 막힌다.
+        ("p/docker-compose.yml", "  - JASYPT_ENCRYPTOR_PASSWORD=${JASYPT_ENCRYPTOR_PASSWORD}"),
+        ("q/docker-compose.yml", "  - POSTGRES_PASSWORD=$POSTGRES_PASSWORD"),
+        ("r.md", "JASYPT_ENCRYPTOR_PASSWORD=<YOUR_PASSWORD>"),
+        ("s.md", "JASYPT_ENCRYPTOR_PASSWORD=***REDACTED***"),
+        # heredoc 안에서 이스케이프된 셸 변수 — 배포 스크립트에 흔하다.
+        ("t/run.sh", '  -e JASYPT_ENCRYPTOR_PASSWORD="\\${JASYPT_ENCRYPTOR_PASSWORD:-}" \\\\'),
     ]
     bad = 0
     for path, text in must_catch:
